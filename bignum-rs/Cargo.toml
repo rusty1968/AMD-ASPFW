@@ -1,0 +1,12 @@
+[package]
+name = "bignum-rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "bignum_rs"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+zeroize = { version = "1.8", features = ["derive"] }
+subtle = { version = "2.6" }
