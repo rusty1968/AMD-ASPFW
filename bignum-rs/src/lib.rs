@@ -10,8 +10,12 @@
 //! - Memory-safe implementation with secure cleanup
 //! - 28-bit radix arithmetic optimized for ARM Cortex processors
 
+#![allow(non_snake_case)]
+#![allow(dead_code)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)] // FFI functions with raw pointers
+
 use core::slice;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 use subtle::{ConditionallySelectable, ConstantTimeEq, Choice};
 
 // Re-export for C compatibility
@@ -106,6 +110,7 @@ pub const BN_EQUAL: u32 = 3;
 /// Big number structure (C-compatible)
 #[repr(C)]
 #[derive(Clone, ZeroizeOnDrop)]
+#[allow(non_snake_case)]
 pub struct KC_BIGNUM {
     /// How many elements used
     pub Used: u32,
@@ -132,10 +137,10 @@ pub struct KC_BN_SCRATCH {
 impl Default for KC_BIGNUM {
     fn default() -> Self {
         Self {
-            used: 0,
-            sign: 0,
-            obfuscated: 0,
-            data: [0u32; MAX_BN_ELEMENTS],
+            Used: 0,
+            Sign: 0,
+            Obfuscated: 0,
+            Data: [0u32; MAX_BN_ELEMENTS],
         }
     }
 }
@@ -158,47 +163,47 @@ impl KC_BIGNUM {
 
     /// Set bignum to integer value (integer must not be bigger than 0x0FFFFFFF)
     pub fn set_int(&mut self, integer: u32) {
-        self.used = 1;
-        self.sign = 0;
-        self.obfuscated = 0;
-        self.data[0] = integer & BN_MASK;
+        self.Used = 1;
+        self.Sign = 0;
+        self.Obfuscated = 0;
+        self.Data[0] = integer & BN_MASK;
         // Clear the rest
         for i in 1..MAX_BN_ELEMENTS {
-            self.data[i] = 0;
+            self.Data[i] = 0;
         }
     }
 
     /// Check if bignum is zero
     pub fn is_zero(&self) -> bool {
-        self.used == 0 || (self.used == 1 && self.data[0] == 0)
+        self.Used == 0 || (self.Used == 1 && self.Data[0] == 0)
     }
 
     /// Normalize bignum (remove leading zeros)
     pub fn normalize(&mut self) {
-        while self.used > 1 && self.data[self.used as usize - 1] == 0 {
-            self.used -= 1;
+        while self.Used > 1 && self.Data[self.Used as usize - 1] == 0 {
+            self.Used -= 1;
         }
-        if self.used == 1 && self.data[0] == 0 {
-            self.used = 0;
-            self.sign = 0;
+        if self.Used == 1 && self.Data[0] == 0 {
+            self.Used = 0;
+            self.Sign = 0;
         }
     }
 
     /// Validate bignum structure
     pub fn is_valid(&self) -> bool {
-        if self.used as usize > MAX_BN_ELEMENTS {
+        if self.Used as usize > MAX_BN_ELEMENTS {
             return false;
         }
         
         // Check that all used elements are within 28-bit range
-        for i in 0..self.used as usize {
-            if self.data[i] > BN_MASK {
+        for i in 0..self.Used as usize {
+            if self.Data[i] > BN_MASK {
                 return false;
             }
         }
         
         // Check that there are no leading zeros (except for zero itself)
-        if self.used > 1 && self.data[self.used as usize - 1] == 0 {
+        if self.Used > 1 && self.Data[self.Used as usize - 1] == 0 {
             return false;
         }
         
@@ -213,12 +218,12 @@ impl KC_BIGNUM {
 /// Constant-time conditional assignment: if condition, dest = src
 #[allow(dead_code)]
 fn conditional_assign(dest: &mut KC_BIGNUM, src: &KC_BIGNUM, condition: Choice) {
-    dest.used = u32::conditional_select(&dest.used, &src.used, condition);
-    dest.sign = u32::conditional_select(&dest.sign, &src.sign, condition);
-    dest.obfuscated = u32::conditional_select(&dest.obfuscated, &src.obfuscated, condition);
+    dest.Used = u32::conditional_select(&dest.Used, &src.Used, condition);
+    dest.Sign = u32::conditional_select(&dest.Sign, &src.Sign, condition);
+    dest.Obfuscated = u32::conditional_select(&dest.Obfuscated, &src.Obfuscated, condition);
     
     for i in 0..MAX_BN_ELEMENTS {
-        dest.data[i] = u32::conditional_select(&dest.data[i], &src.data[i], condition);
+        dest.Data[i] = u32::conditional_select(&dest.Data[i], &src.Data[i], condition);
     }
 }
 
@@ -227,14 +232,14 @@ fn constant_time_compare(x: &KC_BIGNUM, y: &KC_BIGNUM) -> Choice {
     let mut equal = Choice::from(1u8);
     
     // Compare used lengths
-    equal &= x.used.ct_eq(&y.used);
+    equal &= x.Used.ct_eq(&y.Used);
     
     // Compare signs
-    equal &= x.sign.ct_eq(&y.sign);
+    equal &= x.Sign.ct_eq(&y.Sign);
     
     // Compare all data elements (not just used ones for constant time)
     for i in 0..MAX_BN_ELEMENTS {
-        equal &= x.data[i].ct_eq(&y.data[i]);
+        equal &= x.Data[i].ct_eq(&y.Data[i]);
     }
     
     equal
@@ -251,20 +256,25 @@ pub extern "C" fn BNLoad(
     data: *const u8,
     data_len: u32,
 ) -> u32 {
-    if bn.is_null() || data.is_null() {
+    if bn.is_null() {
         return KCERR_NULL_PTR;
     }
     
     let bn = unsafe { &mut *bn };
-    let data_slice = unsafe { slice::from_raw_parts(data, data_len as usize) };
     
     if data_len == 0 {
         *bn = KC_BIGNUM::default();
         return KC_OK;
     }
     
+    if data.is_null() {
+        return KCERR_NULL_PTR;
+    }
+    
+    let data_slice = unsafe { slice::from_raw_parts(data, data_len as usize) };
+    
     // Calculate required elements
-    let required_elements = ((data_len * 8 + BN_BITS - 1) / BN_BITS) as usize;
+    let required_elements = (data_len * 8).div_ceil(BN_BITS) as usize;
     if required_elements > MAX_BN_ELEMENTS {
         return KCERR_BN_TOO_SMALL;
     }
@@ -288,12 +298,12 @@ pub extern "C" fn BNLoad(
                 }
             }
             
-            bn.data[element_idx] |= (bit_val as u32) << element_bit_pos;
+            bn.Data[element_idx] |= (bit_val as u32) << element_bit_pos;
             bit_pos += 1;
         }
     }
     
-    bn.used = if element_idx == 0 && bn.data[0] == 0 { 0 } else { element_idx as u32 + 1 };
+    bn.Used = if element_idx == 0 && bn.Data[0] == 0 { 0 } else { element_idx as u32 + 1 };
     bn.normalize();
     
     KC_OK
@@ -317,26 +327,64 @@ pub extern "C" fn BNStore(
         return KCERR_BAD_BIGNUMBER;
     }
     
+    // Clear output buffer
+    data_slice.fill(0);
+    
+    if bn.Used == 0 {
+        return KC_OK;
+    }
+    
     // Calculate required bytes
-    let bit_count = if bn.used == 0 { 1 } else { (bn.used - 1) * BN_BITS + (32 - bn.data[bn.used as usize - 1].leading_zeros()) };
+    let bit_count = if bn.Used == 0 { 
+        1 
+    } else { 
+        (bn.Used - 1) * BN_BITS + (32 - bn.Data[bn.Used as usize - 1].leading_zeros()) 
+    };
     let required_bytes = (bit_count + 7) / 8;
     
     if required_bytes > data_len {
         return KCERR_BUFFER_OVERFLOW;
     }
     
-    // Clear output buffer
-    data_slice.fill(0);
-    
-    if bn.used == 0 {
+    // Simple approach: convert elements to bytes in big-endian format
+    // Handle case where we have a single element that fits in fewer than 4 bytes
+    if bn.Used == 1 {
+        let value = bn.Data[0];
+        if value <= 0xFF {
+            // Single byte value - store in rightmost position
+            if data_len >= 1 {
+                data_slice[data_len as usize - 1] = value as u8;
+            }
+        } else if value <= 0xFFFF {
+            // Two byte value - store in big-endian format
+            if data_len >= 2 {
+                data_slice[data_len as usize - 2] = (value >> 8) as u8;
+                data_slice[data_len as usize - 1] = (value & 0xFF) as u8;
+            }
+        } else if value <= 0xFFFFFF {
+            // Three byte value
+            if data_len >= 3 {
+                data_slice[data_len as usize - 3] = (value >> 16) as u8;
+                data_slice[data_len as usize - 2] = ((value >> 8) & 0xFF) as u8;
+                data_slice[data_len as usize - 1] = (value & 0xFF) as u8;
+            }
+        } else {
+            // Four byte value
+            if data_len >= 4 {
+                data_slice[data_len as usize - 4] = (value >> 24) as u8;
+                data_slice[data_len as usize - 3] = ((value >> 16) & 0xFF) as u8;
+                data_slice[data_len as usize - 2] = ((value >> 8) & 0xFF) as u8;
+                data_slice[data_len as usize - 1] = (value & 0xFF) as u8;
+            }
+        }
         return KC_OK;
     }
     
-    // Convert 28-bit elements to big-endian bytes
+    // For multi-element bignums, use bit-by-bit conversion
     let mut bit_pos = 0u32;
     
-    for element_idx in 0..bn.used as usize {
-        let element = bn.data[element_idx];
+    for element_idx in 0..bn.Used as usize {
+        let element = bn.Data[element_idx];
         
         for bit in 0..BN_BITS {
             if bit_pos >= required_bytes * 8 {
@@ -411,25 +459,21 @@ pub extern "C" fn BNCompare(x: *const KC_BIGNUM, y: *const KC_BIGNUM) -> u32 {
     }
     
     // Compare signs first
-    if x.sign != y.sign {
-        return if x.sign == 0 { BN_BIGGER } else { BN_SMALLER };
+    if x.Sign != y.Sign {
+        return if x.Sign == 0 { BN_BIGGER } else { BN_SMALLER };
     }
     
     // Same sign, compare magnitudes
-    if x.used != y.used {
-        let result = if x.used > y.used { BN_BIGGER } else { BN_SMALLER };
-        return if x.sign == 0 { result } else { 
-            if result == BN_BIGGER { BN_SMALLER } else { BN_BIGGER }
-        };
+    if x.Used != y.Used {
+        let result = if x.Used > y.Used { BN_BIGGER } else { BN_SMALLER };
+        return if x.Sign == 0 { result } else if result == BN_BIGGER { BN_SMALLER } else { BN_BIGGER };
     }
     
     // Same length, compare digits from most significant
-    for i in (0..x.used as usize).rev() {
-        if x.data[i] != y.data[i] {
-            let result = if x.data[i] > y.data[i] { BN_BIGGER } else { BN_SMALLER };
-            return if x.sign == 0 { result } else {
-                if result == BN_BIGGER { BN_SMALLER } else { BN_BIGGER }
-            };
+    for i in (0..x.Used as usize).rev() {
+        if x.Data[i] != y.Data[i] {
+            let result = if x.Data[i] > y.Data[i] { BN_BIGGER } else { BN_SMALLER };
+            return if x.Sign == 0 { result } else if result == BN_BIGGER { BN_SMALLER } else { BN_BIGGER };
         }
     }
     
@@ -456,40 +500,39 @@ pub extern "C" fn BNAdd(
     }
     
     // Handle different signs
-    if x.sign != y.sign {
+    if x.Sign != y.Sign {
         // This would be subtraction, implement based on magnitude comparison
         return KCERR_NOT_IMPLEMENTED; // Placeholder for now
     }
     
-    let max_len = core::cmp::max(x.used, y.used) as usize;
+    let max_len = core::cmp::max(x.Used, y.Used) as usize;
     if max_len >= MAX_BN_ELEMENTS {
         return KCERR_BN_TOO_SMALL;
     }
     
     let mut carry = 0u64;
-    let mut result = KC_BIGNUM::default();
-    result.sign = x.sign;
+    let mut result = KC_BIGNUM { Sign: x.Sign, ..Default::default() };
     
     for i in 0..=max_len {
-        let x_digit = if i < x.used as usize { x.data[i] as u64 } else { 0 };
-        let y_digit = if i < y.used as usize { y.data[i] as u64 } else { 0 };
+        let x_digit = if i < x.Used as usize { x.Data[i] as u64 } else { 0 };
+        let y_digit = if i < y.Used as usize { y.Data[i] as u64 } else { 0 };
         
         let sum = x_digit + y_digit + carry;
-        result.data[i] = (sum & BN_MASK as u64) as u32;
+        result.Data[i] = (sum & BN_MASK as u64) as u32;
         carry = sum >> BN_BITS;
         
         if carry > 0 || i < max_len {
-            result.used = (i + 1) as u32;
+            result.Used = (i + 1) as u32;
         }
     }
     
-    if carry > 0 && result.used as usize >= MAX_BN_ELEMENTS {
+    if carry > 0 && result.Used as usize >= MAX_BN_ELEMENTS {
         return KCERR_BN_TOO_SMALL;
     }
     
     if carry > 0 {
-        result.data[result.used as usize] = carry as u32;
-        result.used += 1;
+        result.Data[result.Used as usize] = carry as u32;
+        result.Used += 1;
     }
     
     result.normalize();
@@ -507,16 +550,16 @@ pub extern "C" fn BNBitCount(bn: *const KC_BIGNUM) -> u32 {
     
     let bn = unsafe { &*bn };
     
-    if !bn.is_valid() || bn.used == 0 {
+    if !bn.is_valid() || bn.Used == 0 {
         return 0;
     }
     
-    let msb_element = bn.data[bn.used as usize - 1];
+    let msb_element = bn.Data[bn.Used as usize - 1];
     if msb_element == 0 {
         return 0;
     }
     
-    (bn.used - 1) * BN_BITS + (32 - msb_element.leading_zeros())
+    (bn.Used - 1) * BN_BITS + (32 - msb_element.leading_zeros())
 }
 
 // Placeholder implementations for remaining functions
@@ -642,12 +685,12 @@ pub extern "C" fn BNBarrettReduce(
 macro_rules! BN_SET_INT {
     ($bn:expr, $integer:expr) => {
         {
-            $bn.used = 1;
-            $bn.sign = 0;
-            $bn.obfuscated = 0;
-            $bn.data[0] = $integer;
+            $bn.Used = 1;
+            $bn.Sign = 0;
+            $bn.Obfuscated = 0;
+            $bn.Data[0] = $integer;
             for i in 1..MAX_BN_ELEMENTS {
-                $bn.data[i] = 0;
+                $bn.Data[i] = 0;
             }
         }
     };
@@ -662,9 +705,9 @@ mod tests {
         let mut bn = KC_BIGNUM::new();
         bn.set_int(42);
         
-        assert_eq!(bn.used, 1);
-        assert_eq!(bn.sign, 0);
-        assert_eq!(bn.data[0], 42);
+        assert_eq!(bn.Used, 1);
+        assert_eq!(bn.Sign, 0);
+        assert_eq!(bn.Data[0], 42);
     }
     
     #[test]
