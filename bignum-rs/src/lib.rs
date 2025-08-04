@@ -180,13 +180,19 @@ impl KC_BIGNUM {
 
     /// Normalize bignum (remove leading zeros)
     pub fn normalize(&mut self) {
+        // Remove leading zeros
         while self.Used > 1 && self.Data[self.Used as usize - 1] == 0 {
             self.Used -= 1;
         }
+        
+        // Special case: if the result is truly zero (all digits are zero)
         if self.Used == 1 && self.Data[0] == 0 {
             self.Used = 0;
             self.Sign = 0;
         }
+        
+        // However, if Used > 1, then we have higher-order digits, so don't zero it out
+        // even if Data[0] == 0 (this can happen with carries)
     }
 
     /// Validate bignum structure
@@ -249,7 +255,34 @@ fn constant_time_compare(x: &KC_BIGNUM, y: &KC_BIGNUM) -> Choice {
 // FFI Functions (C-compatible interface)
 //
 
-/// Load big number from byte array (big-endian)
+/// # BNLoad Function Specification
+/// 
+/// ## Purpose
+/// Load a big number from a big-endian byte array into internal 28-bit representation.
+/// 
+/// ## Parameters
+/// - `bn`: Output parameter, must be valid aligned pointer
+/// - `data`: Input byte array in big-endian format
+/// - `data_len`: Length of input data in bytes
+/// 
+/// ## Returns
+/// - `KC_OK` on success
+/// - `KCERR_NULL_PTR` if any pointer is null
+/// - `KCERR_BN_TOO_SMALL` if number too large for representation
+/// 
+/// ## Safety Requirements
+/// - `bn` must point to valid, aligned KC_BIGNUM
+/// - `data` must be valid for reads of `data_len` bytes
+/// - No concurrent access to `bn` during execution
+/// 
+/// ## Example
+/// ```c
+/// KC_BIGNUM bn;
+/// uint8_t data[] = {0x01, 0x23, 0x45, 0x67};
+/// uint32_t result = BNLoad(&bn, data, sizeof(data));
+/// assert(result == KC_OK);
+/// assert(bn.Used >= 1);
+/// ```
 #[no_mangle]
 pub extern "C" fn BNLoad(
     bn: *mut KC_BIGNUM,
@@ -380,27 +413,49 @@ pub extern "C" fn BNStore(
         return KC_OK;
     }
     
-    // For multi-element bignums, use bit-by-bit conversion
-    let mut bit_pos = 0u32;
-    
-    for element_idx in 0..bn.Used as usize {
+    // For multi-element bignums, use a simpler byte-oriented approach
+    // Calculate the actual bit count more precisely
+    let mut actual_bits = 0u32;
+    for element_idx in (0..bn.Used as usize).rev() {
         let element = bn.Data[element_idx];
-        
-        for bit in 0..BN_BITS {
-            if bit_pos >= required_bytes * 8 {
-                break;
-            }
-            
-            let bit_val = (element >> bit) & 1;
-            let byte_idx = (required_bytes - 1 - bit_pos / 8) as usize;
-            let byte_bit = 7 - (bit_pos % 8);
-            
-            if byte_idx < data_slice.len() {
-                data_slice[byte_idx] |= (bit_val as u8) << byte_bit;
-            }
-            
-            bit_pos += 1;
+        if element != 0 {
+            actual_bits = element_idx as u32 * BN_BITS + (32 - element.leading_zeros());
+            break;
         }
+    }
+    
+    if actual_bits == 0 {
+        return KC_OK; // Already cleared
+    }
+    
+    let actual_bytes = (actual_bits + 7) / 8;
+    if actual_bytes > data_len {
+        return KCERR_BUFFER_OVERFLOW;
+    }
+    
+    // Place bytes at the end of the buffer (right-aligned, big-endian)
+    let start_offset = data_len as usize - actual_bytes as usize;
+    
+    // Convert from little-endian 28-bit elements to big-endian bytes
+    for byte_idx in 0..actual_bytes as usize {
+        let mut byte_val = 0u8;
+        
+        for bit_in_byte in 0..8 {
+            let global_bit_idx = byte_idx * 8 + bit_in_byte;
+            if global_bit_idx < actual_bits as usize {
+                // Calculate which element and bit within element
+                let bit_from_right = (actual_bits as usize - 1) - global_bit_idx;
+                let element_idx = bit_from_right / BN_BITS as usize;
+                let bit_in_element = bit_from_right % BN_BITS as usize;
+                
+                if element_idx < bn.Used as usize {
+                    let bit_val = (bn.Data[element_idx] >> bit_in_element) & 1;
+                    byte_val |= (bit_val as u8) << (7 - bit_in_byte);
+                }
+            }
+        }
+        
+        data_slice[start_offset + byte_idx] = byte_val;
     }
     
     KC_OK
@@ -521,7 +576,8 @@ pub extern "C" fn BNAdd(
         result.Data[i] = (sum & BN_MASK as u64) as u32;
         carry = sum >> BN_BITS;
         
-        if carry > 0 || i < max_len {
+        // Update Used if this digit is non-zero or if we're within the original length
+        if result.Data[i] != 0 || i < max_len {
             result.Used = (i + 1) as u32;
         }
     }
