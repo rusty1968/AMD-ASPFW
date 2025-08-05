@@ -1,5 +1,5 @@
-# BigNum-RS Build System with Unit Tests and Coverage
-# This builds the Rust library, C unit tests, and FFI compatibility tests
+# BigNum-RS Build System with Unit Tests, Coverage, and C Integration
+# This builds the Rust library, C unit tests, FFI compatibility tests, and handles header generation
 
 # Project configuration
 PROJECT_NAME = bignum_rs
@@ -13,35 +13,40 @@ TEST_DIR = tests
 TARGET_DIR = target/release
 TARGET_DEBUG_DIR = target/debug
 BUILD_DIR = build
+HEADER_OUTPUT_DIR = target/include/bignum-rs
 
 # Compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -I$(INCLUDE_DIR)
-CFLAGS_COVERAGE = -Wall -Wextra -O0 -g --coverage -fprofile-arcs -ftest-coverage -I$(INCLUDE_DIR)
+CFLAGS = -Wall -Wextra -O2 -I$(INCLUDE_DIR) -I$(HEADER_OUTPUT_DIR)
+CFLAGS_COVERAGE = -Wall -Wextra -O0 -g --coverage -fprofile-arcs -ftest-coverage -I$(INCLUDE_DIR) -I$(HEADER_OUTPUT_DIR)
 LIBS = -lpthread -ldl -lm
 LIBS_COVERAGE = -lpthread -ldl -lm -lgcov
 
 # Rust configuration
 CARGO = cargo
 CARGO_FLAGS = --release
+CARGO_FIRMWARE_FLAGS = --features firmware,no-std --profile firmware
+CARGO_CBINDGEN_FLAGS = --features cbindgen
 
 # Test targets
 UNIT_TEST = $(BUILD_DIR)/unit_test
 FFI_TEST = $(BUILD_DIR)/test_bignum_ffi
 COVERAGE_TEST = $(BUILD_DIR)/unit_test_coverage
 
-.PHONY: all clean test unit-test coverage rust-lib debug-lib clippy help install info
+.PHONY: all clean test unit-test coverage rust-lib debug-lib clippy help install info headers build-firmware
 
 # Default target
-all: rust-lib unit-test
+all: rust-lib headers unit-test
 
 help:
 	@echo "=== BigNum-RS Build System ==="
 	@echo ""
 	@echo "Available targets:"
-	@echo "  all          - Build library and run unit tests"
+	@echo "  all          - Build library, headers, and run unit tests"
 	@echo "  rust-lib     - Build Rust library (release)"
 	@echo "  debug-lib    - Build Rust library (debug)"
+	@echo "  headers      - Generate C headers using cbindgen"
+	@echo "  build-firmware - Build firmware-optimized version"
 	@echo "  unit-test    - Build and run focused unit tests"
 	@echo "  coverage     - Build and run tests with coverage analysis"
 	@echo "  ffi-test     - Build and run comprehensive FFI tests"
@@ -74,6 +79,26 @@ $(TARGET_DEBUG_DIR)/$(RUST_LIB_NAME):
 	@echo "Building Rust library (debug)..."
 	$(CARGO) build
 	@echo "✓ Rust library (debug) built successfully"
+
+# Build firmware-optimized version
+build-firmware:
+	@echo "Building firmware-optimized version..."
+	$(CARGO) build $(CARGO_FIRMWARE_FLAGS)
+	@echo "✓ Firmware build completed - check target/firmware/ for output"
+
+# Generate C headers using cbindgen
+headers: $(HEADER_OUTPUT_DIR)/bignum_rs.h
+	@echo "✓ C headers generated successfully"
+
+$(HEADER_OUTPUT_DIR)/bignum_rs.h: src/lib.rs cbindgen.toml
+	@mkdir -p $(HEADER_OUTPUT_DIR)
+	@echo "Generating C headers..."
+	$(CARGO) build $(CARGO_CBINDGEN_FLAGS)
+	@if [ -f "$(HEADER_OUTPUT_DIR)/bignum_rs.h" ]; then \
+		echo "✓ Headers generated at $(HEADER_OUTPUT_DIR)/bignum_rs.h"; \
+	else \
+		echo "⚠ Header generation may have failed - check build.rs output"; \
+	fi
 
 # Run Rust clippy linter
 clippy:
@@ -169,16 +194,20 @@ clean:
 	@echo "✓ Clean complete"
 
 # Install the library system-wide
-install: rust-lib
+install: rust-lib headers
 	@echo "Installing library and headers..."
 	sudo mkdir -p /usr/local/lib /usr/local/include
 	sudo cp $(TARGET_DIR)/$(RUST_LIB_NAME) /usr/local/lib/
-	sudo cp $(INCLUDE_DIR)/bignum_ffi.h /usr/local/include/
+	@if [ -f "$(HEADER_OUTPUT_DIR)/bignum_rs.h" ]; then \
+		sudo cp $(HEADER_OUTPUT_DIR)/bignum_rs.h /usr/local/include/; \
+	elif [ -f "$(INCLUDE_DIR)/bignum_ffi.h" ]; then \
+		sudo cp $(INCLUDE_DIR)/bignum_ffi.h /usr/local/include/; \
+	fi
 	sudo ldconfig 2>/dev/null || true
 	@echo "✓ Installation complete"
 	@echo ""
 	@echo "To use in your projects:"
-	@echo "  #include <bignum_ffi.h>"
+	@echo "  #include <bignum_rs.h>"
 	@echo "  gcc ... -lbignum_rs -lpthread -ldl -lm"
 
 # Show detailed project information
@@ -187,7 +216,8 @@ info:
 	@echo ""
 	@echo "Project: $(PROJECT_NAME)"
 	@echo "Rust Library: $(TARGET_DIR)/$(RUST_LIB_NAME)"
-	@echo "C Header: $(INCLUDE_DIR)/bignum_ffi.h"
+	@echo "C Headers: $(HEADER_OUTPUT_DIR)/bignum_rs.h"
+	@echo "Legacy Headers: $(INCLUDE_DIR)/bignum_ffi.h"
 	@echo "Unit Tests: $(TEST_DIR)/unit_test.c"
 	@echo "FFI Tests: $(EXAMPLES_DIR)/test_bignum_ffi.c"
 	@echo ""
@@ -195,6 +225,12 @@ info:
 	@echo "  Unit Test: $(UNIT_TEST)"
 	@echo "  FFI Test: $(FFI_TEST)"
 	@echo "  Coverage Test: $(COVERAGE_TEST)"
+	@echo ""
+	@echo "Build features available:"
+	@echo "  std          - Standard library support (default)"
+	@echo "  no-std       - No standard library (embedded)"
+	@echo "  firmware     - Firmware-optimized build"
+	@echo "  cbindgen     - C header generation"
 	@echo ""
 	@echo "Test Statistics:"
 	@if [ -f $(UNIT_TEST) ]; then \
@@ -206,6 +242,11 @@ info:
 		echo "  FFI tests: Available"; \
 	else \
 		echo "  FFI tests: Not built (run 'make ffi-test')"; \
+	fi
+	@if [ -f "$(HEADER_OUTPUT_DIR)/bignum_rs.h" ]; then \
+		echo "  C headers: Generated"; \
+	else \
+		echo "  C headers: Not generated (run 'make headers')"; \
 	fi
 	@echo ""
 
@@ -222,12 +263,13 @@ dev: debug-lib unit-test
 	@echo "✓ Development build completed"
 
 # CI target - comprehensive testing for continuous integration
-ci: clippy rust-lib unit-test ffi-test coverage
+ci: clippy rust-lib headers unit-test ffi-test coverage
 	@echo "✓ CI test suite completed"
 	@echo ""
 	@echo "Summary:"
 	@echo "  ✓ Clippy linting passed"
 	@echo "  ✓ Rust library built"
+	@echo "  ✓ C headers generated"
 	@echo "  ✓ Unit tests passed"
 	@echo "  ✓ FFI tests passed"
 	@echo "  ✓ Coverage analysis completed"

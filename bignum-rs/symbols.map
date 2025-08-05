@@ -1,0 +1,24 @@
+BIGNUM_1_0 {
+  global:
+    BNLoad;
+    BNStore;
+    BNCopy;
+    BNCompare;
+    BNSecureCompare;
+    BNAdd;
+    BNBitCount;
+    BNSubtract;
+    BNMultiply;
+    BNMultiplyHighDigs;
+    BNShiftDigR;
+    BNShiftDigL;
+    BNShiftBitsL;
+    BNShiftBitsR;
+    BNMod_2Pwr;
+    BNDiv;
+    BNSet2Pwr;
+    BNBarrettSetup;
+    BNBarrettReduce;
+  local:
+    *;
+};

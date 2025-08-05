@@ -26,7 +26,7 @@ A high-performance, memory-safe Rust implementation of big number arithmetic des
 
 ### Quick Start
 ```bash
-# Build library and run unit tests
+# Build library, generate headers, and run unit tests
 make all
 
 # Build release library only
@@ -34,6 +34,12 @@ make rust-lib
 
 # Build debug version
 make debug-lib
+
+# Generate C headers using cbindgen
+make headers
+
+# Build firmware-optimized version (no-std)
+make build-firmware
 ```
 
 ### Available Build Targets
@@ -43,6 +49,8 @@ make help                    # Show all available targets
 # Core Targets
 make rust-lib               # Build release library
 make debug-lib              # Build debug library
+make headers                # Generate C headers with cbindgen
+make build-firmware         # Build firmware-optimized (no-std) version
 make clean                  # Clean all build artifacts
 
 # Testing Targets
@@ -57,10 +65,10 @@ make memcheck               # Run tests with valgrind
 make quick                  # Unit tests only
 make full                   # All tests + coverage
 make dev                    # Debug build + unit tests
-make ci                     # Complete CI pipeline
+make ci                     # Complete CI pipeline (includes headers)
 
 # System Integration
-make install                # Install system-wide
+make install                # Install system-wide (with headers)
 make info                   # Show project information
 ```
 
@@ -99,6 +107,18 @@ make ci                     # Complete CI pipeline
 Runs: Clippy → Build → Unit Tests → FFI Tests → Coverage Analysis
 
 ## 📚 API Reference
+
+### Generated C Headers
+BigNum-RS automatically generates C headers using `cbindgen` for seamless integration:
+```bash
+make headers                # Generates target/include/bignum-rs/bignum_generated.h
+```
+
+The generated header includes:
+- **Complete type definitions** with documentation
+- **All function declarations** with parameter descriptions  
+- **Preprocessor constants** and error codes
+- **C++ compatibility** with extern "C" blocks
 
 ### Core Data Structure
 ```c
@@ -249,17 +269,21 @@ Function Performance (operations per second):
 ## 🔄 Migration from bignum.c
 
 ### Direct Replacement
-1. Replace `#include "bignum.h"` with `#include "bignum_ffi.h"`
-2. Link with `-lbignum_rs -lpthread -ldl -lm` instead of `bignum.o`
-3. No source code changes required
+1. Generate headers: `make headers`
+2. Replace `#include "bignum.h"` with `#include "bignum_generated.h"` (or use legacy `bignum_ffi.h`)
+3. Link with `-lbignum_rs -lpthread -ldl -lm` instead of `bignum.o`
+4. No source code changes required
 
 ### Compilation
 ```bash
 # Old way
 gcc -o myapp main.c bignum.o -lm
 
-# New way
-gcc -o myapp main.c -lbignum_rs -lpthread -ldl -lm
+# New way (with generated headers)
+gcc -I target/include/bignum-rs -o myapp main.c -lbignum_rs -lpthread -ldl -lm
+
+# Alternative (with static headers)
+gcc -I include -o myapp main.c -lbignum_rs -lpthread -ldl -lm
 ```
 
 ### Benefits of Migration
@@ -267,6 +291,44 @@ gcc -o myapp main.c -lbignum_rs -lpthread -ldl -lm
 - **Better performance** with optimized algorithms
 - **Improved reliability** with comprehensive testing
 - **Future-proof architecture** with Rust ecosystem benefits
+
+### Build Features and Configurations
+
+BigNum-RS supports multiple build configurations for different deployment scenarios:
+
+#### Standard Build (Default)
+```bash
+make rust-lib               # Full std library support
+```
+- Complete Rust standard library
+- All debugging and development features
+- Optimized for development workflow
+
+#### Firmware Build (Embedded/No-Std)
+```bash
+make build-firmware         # No-std, size-optimized
+```
+- No standard library dependencies
+- Minimal memory footprint
+- Size and performance optimized
+- Suitable for embedded firmware
+
+#### Debug Build
+```bash
+make debug-lib              # Debug symbols included
+```
+- Full debugging information
+- Unoptimized for better debugging
+- Memory safety checks enabled
+
+#### Available Cargo Features
+```bash
+# Feature flags for custom builds
+std          # Standard library support (default)
+no-std       # No standard library (embedded)
+firmware     # Firmware-specific optimizations
+cbindgen     # C header generation capability
+```
 
 ## 📊 Test Coverage
 
