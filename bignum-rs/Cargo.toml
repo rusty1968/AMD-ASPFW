@@ -1,0 +1,41 @@
+[package]
+name = "bignum-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["AMD ASPFW Team"]
+description = "Memory-safe big number library for cryptographic firmware"
+license = "ISC"
+keywords = ["cryptography", "bignum", "firmware", "ffi", "embedded"]
+categories = ["cryptography", "embedded", "no-std"]
+exclude = ["tests/", "examples/", "docs/"]
+
+[lib]
+name = "bignum_rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+zeroize = { version = "1.8", features = ["derive"], default-features = false }
+subtle = { version = "2.6", default-features = false }
+
+[build-dependencies]
+cbindgen = { version = "0.26", optional = true }
+
+[features]
+default = ["std"]
+std = []
+no-std = []
+cbindgen = ["dep:cbindgen"]
+firmware = ["no-std"]
+test-c-integration = []
+
+[profile.release]
+opt-level = "s"        # Optimize for size (firmware)
+lto = true            # Link-time optimization
+codegen-units = 1     # Single codegen unit for smaller binary
+panic = "abort"       # No unwinding in firmware
+strip = true          # Strip symbols
+
+[profile.firmware]
+inherits = "release"
+opt-level = "z"       # Optimize aggressively for size
+debug = false         # No debug info in firmware builds
